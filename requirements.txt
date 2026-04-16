@@ -1,5 +1,8 @@
 streamlit
 PyPDF2
+numpy
+python-dotenv
 sentence-transformers
 scikit-learn
-numpy
+openai
+torch
