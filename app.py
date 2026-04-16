@@ -1,17 +1,77 @@
 import streamlit as st
 from PyPDF2 import PdfReader
 import numpy as np
+import os
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from openai import OpenAI
 
 # =========================
-# MODELS
+# DB IMPORT
 # =========================
+from db import init_db, add_user, check_user, save_result, get_history
+
+# =========================
+# INIT
+# =========================
+init_db()
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 model = SentenceTransformer('all-MiniLM-L6-v2')
-rag_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # =========================
-# PDF TEXT EXTRACTION
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="AI Hiring Copilot PRO", layout="wide")
+st.title("🚀 AI Hiring Copilot PRO (SaaS Version)")
+
+# =========================
+# SESSION STATE FIX
+# =========================
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+
+# =========================
+# SIDEBAR LOGIN SYSTEM (FIXED)
+# =========================
+st.sidebar.title("🔐 Account System")
+
+menu = st.sidebar.selectbox("Menu", ["Login", "Register"])
+
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+
+if menu == "Register":
+    if st.sidebar.button("Register"):
+        if username and password:
+            add_user(username, password)
+            st.success("User created ✔ Please login")
+        else:
+            st.error("Enter username & password")
+
+elif menu == "Login":
+    if st.sidebar.button("Login"):
+        user = check_user(username, password)
+        if user:
+            st.session_state["user"] = username
+            st.success("Login successful ✔")
+            st.rerun()   # 🔥 IMPORTANT FIX
+        else:
+            st.error("Invalid credentials ❌")
+
+# =========================
+# BLOCK IF NOT LOGGED IN
+# =========================
+if not st.session_state["user"]:
+    st.warning("Please login to continue 🚀")
+    st.stop()
+
+st.success(f"Welcome {st.session_state['user']} 👋")
+
+# =========================
+# PDF EXTRACTION
 # =========================
 def extract_text(pdf):
     reader = PdfReader(pdf)
@@ -34,7 +94,7 @@ def extract_skills(text):
     return list(set([s for s in SKILLS if s in text]))
 
 # =========================
-# ML SCORE
+# AI SCORE
 # =========================
 def semantic_score(resume, job):
     r = model.encode([resume])
@@ -42,70 +102,54 @@ def semantic_score(resume, job):
     return round(cosine_similarity(r, j)[0][0] * 100, 2)
 
 # =========================
-# RAG (MULTI-CHUNK IMPROVED)
+# GPT FUNCTION
 # =========================
-def chunk_text(text):
-    return [c.strip() for c in text.split(". ") if len(c) > 20]
+def ask_gpt(resume_text, job_desc, question):
 
-def get_top_chunks(question, resume_text, top_k=3):
-    chunks = chunk_text(resume_text)
+    prompt = f"""
+You are an AI Hiring Assistant.
 
-    if len(chunks) == 0:
-        return "No relevant data found."
+Resume:
+{resume_text}
 
-    chunk_embeddings = rag_model.encode(chunks)
-    question_embedding = rag_model.encode([question])
+Job Description:
+{job_desc}
 
-    scores = np.dot(chunk_embeddings, question_embedding.T).flatten()
+User Question:
+{question}
 
-    top_indices = scores.argsort()[-top_k:][::-1]
+Give clear answer with:
+- Eligibility
+- Skill gaps
+- Explanation
+"""
 
-    results = []
-    for i in top_indices:
-        results.append(f"• {chunks[i]}")
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
 
-    return "\n".join(results)
-
-# =========================
-# DECISION ENGINE
-# =========================
-def decision(score):
-    if score >= 75:
-        return "🟢 Strong Candidate"
-    elif score >= 50:
-        return "🟡 Medium Candidate"
-    else:
-        return "🔴 Weak Candidate"
-
-def eligibility(score, missing):
-    if score >= 75 and len(missing) <= 2:
-        return "Highly Eligible ✅"
-    elif score >= 50:
-        return "Partially Eligible ⚠️"
-    else:
-        return "Not Eligible ❌"
-
-def confidence(score):
-    return f"{min(100, max(0, score)):.0f}% Confidence"
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 # =========================
-# UI DESIGN
+# INPUT UI
 # =========================
-st.set_page_config(page_title="AI Hiring Copilot", layout="wide")
-
-st.title("🚀 AI Hiring Copilot PRO")
-
 uploaded_file = st.file_uploader("📄 Upload Resume (PDF)")
-job_desc = st.text_area("💼 Paste Job Description")
+job_desc = st.text_area("💼 Job Description")
 
 resume_text = ""
 
-# =========================
-# PROCESS
-# =========================
 if uploaded_file:
     resume_text = extract_text(uploaded_file)
+    st.subheader("📄 Resume Preview")
+    st.write(resume_text)
 
+# =========================
+# ANALYSIS
+# =========================
 if resume_text and job_desc:
 
     resume_skills = extract_skills(resume_text)
@@ -116,13 +160,14 @@ if resume_text and job_desc:
 
     score = semantic_score(resume_text, job_desc)
 
-    # =========================
-    # DASHBOARD UI
-    # =========================
+    # SAVE TO DB
+    save_result(st.session_state["user"], score, matched, missing)
+
+    # DASHBOARD
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("AI Match Score", f"{score}%")
+        st.metric("AI Score", f"{score}%")
 
     with col2:
         st.metric("Matched Skills", len(matched))
@@ -132,40 +177,31 @@ if resume_text and job_desc:
 
     st.progress(int(score))
 
-    # =========================
-    # RESULTS
-    # =========================
-    st.subheader("🧠 Decision")
-    st.success(decision(score))
-
-    st.subheader("🎯 Eligibility")
-    st.info(eligibility(score, missing))
-
-    st.subheader("📊 Confidence")
-    st.write(confidence(score))
-
-    # =========================
-    # SKILLS
-    # =========================
-    st.subheader("✔ Matched Skills")
-    st.write(matched)
-
-    st.subheader("❌ Missing Skills")
-    st.write(missing)
-
-    # =========================
-    # RAG SECTION
-    # =========================
-    st.subheader("💬 Ask Resume (AI Insight)")
-    question = st.text_input("Ask anything about resume")
-
-    if question:
-        st.write("🔍 Top Relevant Resume Parts:")
-        st.write(get_top_chunks(question, resume_text))
+    st.subheader("🧠 Skills Analysis")
+    st.write("✔ Matched:", matched)
+    st.write("❌ Missing:", missing)
 
 # =========================
-# RESUME DISPLAY
+# GPT CHAT
 # =========================
-if uploaded_file:
-    st.subheader("📄 Resume Preview")
-    st.write(resume_text)
+st.subheader("💬 AI Assistant")
+
+question = st.text_input("Ask something")
+
+if question and resume_text and job_desc:
+    with st.spinner("Thinking..."):
+        answer = ask_gpt(resume_text, job_desc, question)
+        st.write(answer)
+
+# =========================
+# HISTORY
+# =========================
+st.subheader("📊 Your History")
+
+history = get_history(st.session_state["user"])
+
+for h in history:
+    st.write("Score:", h[0])
+    st.write("Matched:", h[1])
+    st.write("Missing:", h[2])
+    st.write("---")
