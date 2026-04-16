@@ -1,1 +1,4 @@
-C:\Users\ismail basravi\OneDrive\Desktop\Resume-Analyzer\ai_hiring_copilot_v2\app.py
+import streamlit as st
+
+st.title("AI Hiring Copilot v2 🚀")
+st.write("App is working on Streamlit Cloud")
