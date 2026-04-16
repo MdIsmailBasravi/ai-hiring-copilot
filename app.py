@@ -1,12 +1,11 @@
 import streamlit as st
 from PyPDF2 import PdfReader
-
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # =========================
-# AI MODELS
+# MODELS
 # =========================
 model = SentenceTransformer('all-MiniLM-L6-v2')
 rag_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -23,7 +22,7 @@ def extract_text(pdf):
     return text
 
 # =========================
-# SKILL SYSTEM
+# SKILLS
 # =========================
 SKILLS = [
     "python", "java", "sql", "flask", "django",
@@ -32,85 +31,81 @@ SKILLS = [
 
 def extract_skills(text):
     text = text.lower()
-    found = []
-    for skill in SKILLS:
-        if skill in text:
-            found.append(skill)
-    return list(set(found))
+    return list(set([s for s in SKILLS if s in text]))
 
 # =========================
-# SEMANTIC SCORE (ML)
+# ML SCORE
 # =========================
 def semantic_score(resume, job):
     r = model.encode([resume])
     j = model.encode([job])
-
-    score = cosine_similarity(r, j)[0][0]
-    return round(score * 100, 2)
+    return round(cosine_similarity(r, j)[0][0] * 100, 2)
 
 # =========================
-# RAG SYSTEM
+# RAG (MULTI-CHUNK IMPROVED)
 # =========================
 def chunk_text(text):
-    return text.split(". ")
+    return [c.strip() for c in text.split(". ") if len(c) > 20]
 
-def get_relevant_chunks(question, resume_text):
+def get_top_chunks(question, resume_text, top_k=3):
     chunks = chunk_text(resume_text)
+
+    if len(chunks) == 0:
+        return "No relevant data found."
 
     chunk_embeddings = rag_model.encode(chunks)
     question_embedding = rag_model.encode([question])
 
-    scores = np.dot(chunk_embeddings, question_embedding.T)
+    scores = np.dot(chunk_embeddings, question_embedding.T).flatten()
 
-    top_index = np.argmax(scores)
-    best_chunk = chunks[top_index]
+    top_indices = scores.argsort()[-top_k:][::-1]
 
-    return f"""
-🔍 Relevant Resume Info:
-{best_chunk}
+    results = []
+    for i in top_indices:
+        results.append(f"• {chunks[i]}")
 
-💡 Interpretation:
-This part of resume is most relevant to: "{question}"
-"""
+    return "\n".join(results)
 
 # =========================
 # DECISION ENGINE
 # =========================
-def explain_decision(score):
-    if score > 70:
-        return "Strong candidate — good match with job requirements."
-    elif score > 40:
-        return "Average candidate — some skills missing."
+def decision(score):
+    if score >= 75:
+        return "🟢 Strong Candidate"
+    elif score >= 50:
+        return "🟡 Medium Candidate"
     else:
-        return "Weak candidate — major skill gaps."
+        return "🔴 Weak Candidate"
 
-def resume_tips(missing):
-    if len(missing) == 0:
-        return "Good resume. Add more real-world projects to stand out."
-    return "Improve these skills: " + ", ".join(missing)
+def eligibility(score, missing):
+    if score >= 75 and len(missing) <= 2:
+        return "Highly Eligible ✅"
+    elif score >= 50:
+        return "Partially Eligible ⚠️"
+    else:
+        return "Not Eligible ❌"
+
+def confidence(score):
+    return f"{min(100, max(0, score)):.0f}% Confidence"
 
 # =========================
-# UI
+# UI DESIGN
 # =========================
-st.title("AI Hiring Copilot v2 🚀")
+st.set_page_config(page_title="AI Hiring Copilot", layout="wide")
 
-uploaded_file = st.file_uploader("Upload Resume (PDF)")
-job_desc = st.text_area("Paste Job Description")
+st.title("🚀 AI Hiring Copilot PRO")
+
+uploaded_file = st.file_uploader("📄 Upload Resume (PDF)")
+job_desc = st.text_area("💼 Paste Job Description")
 
 resume_text = ""
 
 # =========================
-# PROCESS RESUME
+# PROCESS
 # =========================
 if uploaded_file:
     resume_text = extract_text(uploaded_file)
 
-    st.subheader("📄 Resume Text")
-    st.write(resume_text)
-
-# =========================
-# ANALYSIS
-# =========================
 if resume_text and job_desc:
 
     resume_skills = extract_skills(resume_text)
@@ -121,26 +116,56 @@ if resume_text and job_desc:
 
     score = semantic_score(resume_text, job_desc)
 
-    st.subheader("🧠 Skill Analysis")
-    st.write("✔ Matched Skills:", matched)
-    st.write("❌ Missing Skills:", missing)
+    # =========================
+    # DASHBOARD UI
+    # =========================
+    col1, col2, col3 = st.columns(3)
 
-    st.subheader("📊 AI Match Score")
-    st.write(score, "%")
+    with col1:
+        st.metric("AI Match Score", f"{score}%")
 
-    st.subheader("🧠 Hiring Decision")
-    st.write(explain_decision(score))
+    with col2:
+        st.metric("Matched Skills", len(matched))
 
-    st.subheader("📌 Improvement Tips")
-    st.write(resume_tips(missing))
+    with col3:
+        st.metric("Missing Skills", len(missing))
+
+    st.progress(int(score))
+
+    # =========================
+    # RESULTS
+    # =========================
+    st.subheader("🧠 Decision")
+    st.success(decision(score))
+
+    st.subheader("🎯 Eligibility")
+    st.info(eligibility(score, missing))
+
+    st.subheader("📊 Confidence")
+    st.write(confidence(score))
+
+    # =========================
+    # SKILLS
+    # =========================
+    st.subheader("✔ Matched Skills")
+    st.write(matched)
+
+    st.subheader("❌ Missing Skills")
+    st.write(missing)
+
+    # =========================
+    # RAG SECTION
+    # =========================
+    st.subheader("💬 Ask Resume (AI Insight)")
+    question = st.text_input("Ask anything about resume")
+
+    if question:
+        st.write("🔍 Top Relevant Resume Parts:")
+        st.write(get_top_chunks(question, resume_text))
 
 # =========================
-# RAG CHAT
+# RESUME DISPLAY
 # =========================
-st.subheader("💬 Ask About Resume")
-
-question = st.text_input("Ask something (e.g. Am I good for ML role?)")
-
-if question and resume_text:
-    answer = get_relevant_chunks(question, resume_text)
-    st.write(answer)
+if uploaded_file:
+    st.subheader("📄 Resume Preview")
+    st.write(resume_text)
