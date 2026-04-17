@@ -1,4 +1,4 @@
-# 🚀 AI Hiring Copilot PRO
+# 🤖 AI Hiring Copilot PRO
 
 ![Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-red)
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
