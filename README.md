@@ -50,13 +50,11 @@ Resume → Text Extraction → Embedding → Similarity Score → AI Analysis
 
 ### 📊 Dashboard
 
-(Add screenshot here)
+![Dashboard](<img width="1920" height="1020" alt="Screenshot 2026-04-17 153046" src="https://github.com/user-attachments/assets/f19fc8b4-9095-44b1-bb8a-581692de6a5a" />
+)
+
 
 ### 💬 AI Assistant
-
-(Add screenshot here)
-
----
 
 ## ⚙️ Tech Stack
 
